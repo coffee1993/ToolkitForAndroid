@@ -1,7 +1,14 @@
 package com.example.toolkitforandroid.WIFI;
 
+
 /**
  * wifi Utils 管理Wifi wifi等基本使用
+ * 
+ * 
+ * 带 Ap的都跟创建热点有关  ，都为隐藏API需要反射调用
+ * 
+ * 不带Ap的就是网卡能搜索到的wifi
+ * 
  * @author zy
  *
  */
@@ -11,12 +18,9 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-
 import android.R.integer;
 import android.annotation.SuppressLint;
-import android.app.LocalActivityManager;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.net.ConnectivityManager;
 import android.net.DhcpInfo;
 import android.net.NetworkInfo;
@@ -25,108 +29,74 @@ import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.nfc.Tag;
-import android.text.GetChars;
+import android.os.Handler;
+import android.os.RemoteException;
+import android.text.TextUtils;
+import android.util.Log;
 
 /**
- * wifimanager --> wifiinfo dhcpinfo ConnectManager --> networkinfo
- * 
- * ConnectManager 与 Wifimanager的关系
  * 
  * @author zhangyi
  * 
  */
 public class WifiManagerUtils {
 
-	private static final String TAG_STRING = "NearChat";
+	private static final String TAG = "WIFI_LOG";
+
 	private WifiManager wifimanager;
 	private WifiInfo wifiInfo;
 	private DhcpInfo dhcpInfo;
 	private NetworkInfo networkInfo;
 	private StringBuffer buffer;
-
+	private static Context mContext;
 	private List<ScanResult> scanResults = null; // 扫描的wifi结果集
 	private List<WifiConfiguration> wifiConfigurations = null;
 	private ConnectivityManager connectivityManager;
-
+	
 	private static WifiManagerUtils managerUtils = null;
 
 	// 需要打开锁
 	private WifiManager.WifiLock mWifiLock;
 
 	public static enum WifiChiperType {
-		WIFICIPHER_WEP, WIFICIPHER_WPA, WIFICIPHER_NOPASS
+		WIFICIPHER_WEP, WIFICIPHER_WPA,WIFICIPHER_WPA2, WIFICIPHER_NOPASS
 	}
 
 	private WifiManagerUtils(Context pContext) {
+		mContext = pContext;
 		wifimanager = (WifiManager) pContext
 				.getSystemService(Context.WIFI_SERVICE); // 这行代码写在这里好还是写在字段那里好
-
 		wifiInfo = wifimanager.getConnectionInfo(); // 获取当前连接的wifi网络
 		dhcpInfo = wifimanager.getDhcpInfo();
-
-		// 问题出在这里 networkInfo是什么网络信息
-		/*
-		 * networkInfo = ((ConnectivityManager) pContext
-		 * .getSystemService(Context
-		 * .CAPTIONING_SERVICE)).getNetworkInfo(ConnectivityManager.TYPE_WIFI);
-		 *//*
-			 * networkInfo = connectivityManager
-			 * .getNetworkInfo(ConnectivityManager.TYPE_WIFI); //wifi类型的网络连接
-			 */
 		wifiConfigurations = new ArrayList<WifiConfiguration>();
 
 	}
-
 	public static WifiManagerUtils getInstance(Context paramContext) {
 		if (managerUtils == null)
+			Log.i(TAG, "wifiManager 第一次初始化");
 			managerUtils = new WifiManagerUtils(paramContext);
 		return managerUtils;
 	}
-
 	/**
-	 * 获取网卡状态
-	 * 
-	 * WIFI_AP_STATE_FAILED 14 WIFI_STATE_ENABLED 3 wifi的开启 WIFI_STATE_ENABLING
-	 * 2 wifi正在开启 WIFI_STATE_DISABLED 1 wifi关闭 WIFI_STATE_UNKNOWN 4 未知 wifi状态
-	 * WIFI_AP_STATE_DISABLING 10 WIFI_AP_STATE_DISABLED 11
-	 * WIFI_AP_STATE_ENABLING 12 WIFI_AP_STATE_ENABLED 13
-	 * 
-	 * @return
+	 * 获取网卡状态 WIFI_STATE
+	 *	  
+	 * @return	WIFI_STATE_DISABLING 0
+	 * 			WIFI_STATE_DISABLED  1
+	 * 			WIFI_STATE_ENABLED	2
+     *	 		WIFI_STATE_ENABLING 3
+     *	 		WIFI_STATE_UNKNOWN	4
 	 */
-	public int getWifiApStateInt_invoke() {
-		int state = -1;
-		try {
-			state = ((Integer) wifimanager.getClass()
-					.getMethod("getWifiApState", new Class[0])
-					.invoke(wifimanager, new Object[0])).intValue();
-		} catch (Exception e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
+	public int getWifiStateInt() {
+		int state = wifimanager.getWifiState();
 		return state;
 	}
-	
-	
-	
-	/**
-	 * 获取wifi状态 3是网卡可用 13是热点可用
-	 * 
-	 * @return
-	 */
-	public boolean getWifiAPstate() {
-		boolean state = false;
-		int i = -1;
-		i = wifimanager.getWifiState();
-		if (i == 3 || i == 13)
-			state = true;
-		return state;
-	}
+			
 	/**
 	 * 获取ap State 反射调用 wifimanager的公共方法
 	 * 
 	 * @return 3 13 是可用状态
 	 */
-	public boolean getWifiAPstate_invoke() {
+	public boolean getWifiApState_invoke() {
 		boolean state = false;
 		int i = -1;
 		try {
@@ -134,15 +104,35 @@ public class WifiManagerUtils {
 					.getMethod("getWifiApState", new Class[0])
 					.invoke(wifimanager, new Object[0])).intValue();
 		} catch (Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		if (i == 3 || i == 13)
+		if (i == 13)
 			state = true;
 		return state;
 	}
 
-
+	/**
+	 * 获取热点状态WIFI_AP_STATE 隐藏api 反射
+	 * @return  
+	 * 			WIFI_AP_STATE_DISABLING 10 
+	 * 			WIFI_AP_STATE_DISABLED 11
+	 * 			WIFI_AP_STATE_ENABLING 12 
+	 * 			WIFI_AP_STATE_ENABLED 13
+	 * 			WIFI_AP_STATE_FAILED 14 
+	 */
+	
+	public int getWifiApStateInt_invoke() {
+		int state = -1;
+		try {
+			state = ((Integer) wifimanager.getClass()
+					.getMethod("getWifiApState", new Class[0])
+					.invoke(wifimanager, new Object[0])).intValue();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return state;
+	}
+	
 
 	// 锁定wifi 当文件大的时候需要锁定, 锁定wifi的设计是为了省电 锁定wifi是防止wifi进入睡眠状态
 	public void AcquireWifiLock() {
@@ -162,51 +152,46 @@ public class WifiManagerUtils {
 	}
 
 	
-	//开启wifi
-	
 	/**
 	 * 开启wifi
 	 */
 	public void openWifi() {
+		
+		Log.i(TAG,"开启wifi");
 		if (!wifimanager.isWifiEnabled()) {
 			wifimanager.setWifiEnabled(true);
 		}
 	}
+	
 	/**
-	 * 反射开启wifi
+	 * set WIFI_AP_STATE_ENABLED true
+	 * 反射开启热点状态
 	 */
-	public void openWifiAp(){
+	public void openWifiApEnabled(){
 		if(!isWifiApEnabled()){
 			Method method1;
 			try {
 				method1 = wifimanager.getClass().getMethod("getWifiApConfiguration");
 			
 			method1.setAccessible(true);
+			
 			WifiConfiguration configuration = (WifiConfiguration)method1.invoke(wifimanager);
 			
 			Method method2 = wifimanager.getClass().getMethod("setWifiApEnabled", WifiConfiguration.class,boolean.class);
 			method2.invoke(wifimanager,configuration ,false);
 			
-			
 			} catch (NoSuchMethodException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (IllegalAccessException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (IllegalArgumentException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (InvocationTargetException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
 	}
-	
-	//关闭wifi
-	
-	
+
 	/**
 	 * 关闭wifi
 	 */
@@ -216,8 +201,10 @@ public class WifiManagerUtils {
 		}
 	}
 	
+	
 	/**
-	 * 反射调用wifi关闭方法
+	 *  set WIFI_AP_STATE_ENABLED false
+	 * 反射关闭热点状态  
 	 */
 	
 	public void closeWifiAp() {
@@ -226,33 +213,25 @@ public class WifiManagerUtils {
 				Method method = wifimanager.getClass().getMethod(
 						"getWifiApConfiguration");
 				method.setAccessible(true);
-
 				WifiConfiguration config = (WifiConfiguration) method
 						.invoke(wifimanager);
-
 				Method method2 = wifimanager.getClass().getMethod(
 						"setWifiApEnabled", WifiConfiguration.class,
 						boolean.class);
 				method2.invoke(wifimanager, config, false);
 			} catch (NoSuchMethodException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (IllegalArgumentException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (IllegalAccessException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			} catch (InvocationTargetException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
 	}
 
-	
-	
-	//是否开启wifi
+
 	/**
 	 * 是否开启wifi 如果 
 	 */
@@ -264,7 +243,7 @@ public class WifiManagerUtils {
 	}
 	
 	/**
-	 * 反射调用wifi是否开启 用常规共有方法手机会死
+	 * 反射调用wifi是否开启 
 	 * @return
 	 */
 	public boolean isWifiApEnabled() {
@@ -274,7 +253,6 @@ public class WifiManagerUtils {
 			return (Boolean) method.invoke(wifimanager);
 
 		} catch (NoSuchMethodException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -297,7 +275,7 @@ public class WifiManagerUtils {
 		scanResults = wifimanager.getScanResults();
 
 		for (int i = 0; i < scanResults.size(); i++) {
-			buffer.append("The " + i + " : \n");
+			buffer.append("The " + i + getClass().getSimpleName()+" : \n");
 			// 包含SSID BSSID capabilities level frequency timestamp distance
 			// distanceSd isWpsConfigured isXiaomiRouter
 			buffer.append("BSSID: " + scanResults.get(i).BSSID + "\n");
@@ -319,15 +297,17 @@ public class WifiManagerUtils {
 	public List<ScanResult> getScanWifiList() {
 		// 扫描网络前开启
 		openWifi();
-		wifimanager.startScan(); // getScanResults会立即返回么
+		
+		wifimanager.startScan(); // getScanResults会立即返回么 最好写成广播的形式  
+		Log.i(TAG,"开始扫描wifi>>>>>>>");
 		try {
-			Thread.sleep(1000);
+			Thread.sleep(1500);
 		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 		// 不能及时返回消息
 		scanResults = wifimanager.getScanResults();
+		//wifimanager.getScanResults();
 		return scanResults;
 	}
 
@@ -340,21 +320,31 @@ public class WifiManagerUtils {
 	public WifiConfiguration isExistWifiAp(String SSID) {
 		WifiConfiguration configuration = null;
 		if (!isOpenWifi()) {
+			Log.i(TAG,getClass().getSimpleName()+" :wifi 已关闭");
 			return configuration;
 		}
 		// 调用Configure前需要打开wifi
+
 		Iterator<WifiConfiguration> iterator = wifimanager
 				.getConfiguredNetworks().iterator();
 		if (iterator != null) {
-			do {
-				if (!iterator.hasNext()) {
-					return null;
+			while(iterator.hasNext()){
+				if((configuration = iterator.next())!= null){			
+					Log.i(TAG,getClass().getSimpleName()+": 查询到已配置的网络："+configuration.SSID+" "+configuration.networkId);		
+					if(!TextUtils.isEmpty(configuration.SSID)){
+						if(configuration.SSID.equals(SSID)){
+							Log.i(TAG,getClass().getSimpleName()+"： 返回的网络："+configuration.SSID+" "+configuration.networkId);
+							return configuration;
+						}
+					}
 				}
-				configuration = iterator.next();
-			} while (!configuration.SSID.equals("\"" + SSID + "\""));
+			}
+		}else{
+			Log.i(TAG,getClass().getSimpleName()+"： iterator为空 返回");			
 			return configuration;
 		}
 		return configuration;
+		
 	}
 
 	/**
@@ -390,8 +380,65 @@ public class WifiManagerUtils {
 		return wifiInfo.getSSID();
 	}
 
+	
 	/**
-	 * 获取当前wifiinfo的ip
+	 * 获取本机已经创建的热点名称
+	 * 
+	 * 
+	 */
+	public String getApSSID(){
+		
+		/**
+		 *  
+		 * Gets the Wi-Fi AP Configuration.
+		 * @return AP details in WifiConfiguration
+		 *
+		 * @hide Dont open yet
+     	
+    	public WifiConfiguration getWifiApConfiguration() {
+        	try {
+            return mService.getWifiApConfiguration();
+        	}	 catch (RemoteException e) {
+            	return null;
+        	}
+    	}
+		 */
+		try {
+			//反射方法
+			Method method = wifimanager.getClass().getDeclaredMethod("getWifiApConfiguration", new Class[0]);
+			if(method==null){
+				return null;
+			}
+			//返回对象
+			Object object = method.invoke(wifimanager, new Object[0]);
+			if(object!=null){
+				WifiConfiguration wifiConfiguration = (WifiConfiguration)object;
+				if(wifiConfiguration.SSID!=null){
+					return wifiConfiguration.SSID;
+				}
+				
+			}
+			
+		} catch (NoSuchMethodException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IllegalAccessException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IllegalArgumentException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (InvocationTargetException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return null;
+		
+		
+	}
+	
+	/**
+	 * 获取当前wifiinfo的ip,即本地ip
 	 * 
 	 * @return
 	 */
@@ -404,6 +451,11 @@ public class WifiManagerUtils {
 		return "NULL";
 	}
 
+	public String getServerIPAddress() {
+        DhcpInfo mDhcpInfo = wifimanager.getDhcpInfo();
+        return intToIp(mDhcpInfo.gateway); //why not is ipAdress???
+    }
+	
 	/**
 	 * 获取网络描述
 	 * 
@@ -424,6 +476,7 @@ public class WifiManagerUtils {
 	 * @param ipAddress
 	 * @return
 	 */
+	@SuppressLint("DefaultLocale")
 	private String intToIp(int ipAddress) {
 		String ipString = String.format("%d.%d.%d.%d", (ipAddress & 0xff),
 				(ipAddress >> 8 & 0xff), (ipAddress >> 16 & 0xff),
@@ -431,43 +484,116 @@ public class WifiManagerUtils {
 		return ipString;
 	}
 
+	
+	/**
+	 * 
+	 * 连接wifi 
+	 * @param SSID
+	 * @param password
+	 * @param wifiCipherType
+	 * @return
+	 */
 	public boolean connectWifi(String SSID, String password,
 			WifiChiperType wifiCipherType) {
-		if (!managerUtils.isWifiApEnabled()) {
+		if (!managerUtils.isOpenWifi()) {
+			Log.i(TAG,getClass().getSimpleName()+" :wifi不可用 wifi开启："+
+			managerUtils.isOpenWifi());
 			return false;
 		}
+		
+		Log.i(TAG,getClass().getSimpleName()+": 连接wifi");
 
-		// 取得wifi状态 是否可用 等待wifi开启
-		while (wifimanager.getWifiState() == wifimanager.WIFI_STATE_ENABLING) {
-
+		// 一定要在wifi 在ENABlED状态下
+		while (wifimanager.getWifiState() != WifiManager.WIFI_STATE_ENABLED) {
+			Log.i(TAG,getClass().getSimpleName()+" :循环...");
 		}
 
 		// 创建wificonfiguration
 		WifiConfiguration wifiConfiguration = createWifiConfiguration(SSID,
 				password, wifiCipherType);
+		
 		if (wifiConfiguration == null) {
+			Log.i(TAG,getClass().getSimpleName()+" : createWifiConfiguration 为空 创建失败 返回 false ");
 			return false;
 		}
-		// 将已配置的相同SSID的网络从已配置集合中移除
+
+		//将原来同名的网络配置移除
 		WifiConfiguration config = isExistWifiAp(SSID);
-		if (config != null) {
-			wifimanager.removeNetwork(config.networkId);
+		if (config != null) {	
+			Log.i(TAG,getClass().getSimpleName()+" 移除:"+config.SSID+" "+config.networkId);
+			boolean isRemove= wifimanager.removeNetwork(config.networkId);
+			Log.i(TAG,getClass().getSimpleName()+" 移除已经配置好的相同SSID的网络:"+isRemove);
 		}
-		int netId = wifimanager.addNetwork(wifiConfiguration);
-
-		// wifimanager.disconnect();
+		
+		if(config==null){
+			Log.i(TAG,getClass().getSimpleName()+" :configuration：null");
+			return false;
+		}
+		//id为-1
 		// 断开其他网络 连接配置好的网络
-		wifimanager.enableNetwork(netId, true);
-
-		// wifimanager.reconnect();
-
-		return true;
+		int netId = wifimanager.addNetwork(wifiConfiguration);
+		
+		Log.i(TAG,getClass().getSimpleName()+" :添加到Network中 id为："+netId);
+		//wifimanager.disconnect();
+		
+		boolean flag = false;
+		
+		if(netId!=-1){			
+			//这个函数只是让网卡去连接wifi并不是已经连接上wifi了 所以需要检查网卡状态 需要为2才表示网卡打开
+			flag =  wifimanager.enableNetwork(netId, true);
+		}else{
+			return false;
+		}
+		//wifimanager.saveConfiguration();
+		//wifimanager.reconnect();
+		//wifimanager.reassociate();
+		 
+		//做个定时器循环检测wifi网卡状态 让网卡的状态由可用 变为 运行  2--0
+		int status = wifimanager.getConfiguredNetworks().get(netId).status;		
+		/*  this is the network we are currently connected to
+		   	public static final int CURRENT = 0;
+	        /** supplicant will not attempt to use this network *//*
+	        public static final int DISABLED = 1;
+	        /** supplicant will consider this network available for association *//*
+	        public static final int ENABLED = 2;
+		*/
+		int count = 5;
+		while((status=wifimanager.getConfiguredNetworks().get(netId).status)!=0){
+			Log.i(TAG,getClass().getSimpleName()+" :网卡状态值:"+status);
+			openWifiApEnabled();
+			count--;
+			if(count<1){
+				flag=false;
+				break;
+			}
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+		return flag;
+	}
+	
+	/**
+	 * 判断是否连接上WiFi
+	 * @return
+	 */
+	public boolean isConnected(){
+		boolean flag = false;
+		// 获取NetWorkInfo信息
+		NetworkInfo networkInfo = ((ConnectivityManager) mContext
+				.getSystemService(Context.CONNECTIVITY_SERVICE))
+				.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
+		
+		flag = networkInfo.isConnected();
+		
+		return flag;
 	}
 
 	// 添加一个config配置的信息的wifi,并连接这个wifi,同时让其他的wifi不可用
 	public void addNetwork(WifiConfiguration config) {
 		int i = wifimanager.addNetwork(config);
-
 		wifimanager.enableNetwork(i, true);
 	}
 
@@ -492,8 +618,6 @@ public class WifiManagerUtils {
 
 	}
 
-
-
 	/**
 	 * 创建wifi
 	 * 
@@ -502,22 +626,39 @@ public class WifiManagerUtils {
 	 * @param encrypTpye
 	 */
 	public boolean createWifiAp(String ssid, String password,
-			WifiChiperType encrypTpye) {
-		//此方法不需要反射调用 就可以关闭wifi
+			WifiChiperType encrypTpye,final Handler mHandler) {
+		
+		
 		managerUtils.closeWifi();
-		//managerUtils.closeWifiAp();
-
+		//创建 wifiConfiguration 
 		WifiConfiguration wifiConfiguration = createWifiConfiguration(ssid,
 				password, encrypTpye);
 		if (wifiConfiguration == null) {
 			return false;
 		}
-		// 调用wifimanager的私有方法：setWifiEnable
-		// 创建wifi
-		createWifi(wifiConfiguration);
+		// 反射调用wifimanager带有configuration的私有方法：setWifiApEnable 创建wifi
+		createWifi(wifiConfiguration);	
+		//计时器  循环检测 isWifiApEnabled
+		TimerCheck timerCheck = new TimerCheck() {
+			@Override
+			public void doTimerOutWork() {
+					stop();
+			}
+			@Override
+			public void doTimerCheckWork() {
+				
+				if(managerUtils.isWifiApEnabled()){
+					Log.i(TAG,"做wifi创建计时器循环检测wifi状态 ApEnable:"+managerUtils.isWifiApEnabled()); //true
+					mHandler.sendEmptyMessage(1);
+					stop();					
+				}
+			}
+		};
+		timerCheck.start(10, 1000);
+		
 		return true;
 	}
-
+	
 	private void createWifi(WifiConfiguration wifiConfiguration) {
 		
 		//反射方法才可以传递WifiConfiguration
@@ -527,16 +668,12 @@ public class WifiManagerUtils {
 			method.invoke(wifimanager, wifiConfiguration, true);
 
 		} catch (NoSuchMethodException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (IllegalAccessException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (IllegalArgumentException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (InvocationTargetException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
@@ -560,15 +697,14 @@ public class WifiManagerUtils {
 
 		// encrypTpye 加密类型
 		if (encrypTpye == WifiChiperType.WIFICIPHER_NOPASS) {
-			wifiConfiguration.SSID = ssid;
+			wifiConfiguration.SSID = "\""+ ssid+"\"";;
 			wifiConfiguration.wepKeys[0] = "";
 			wifiConfiguration.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
 			wifiConfiguration.wepTxKeyIndex = 0;
 		}
-		if (encrypTpye == WifiChiperType.WIFICIPHER_WEP) {
-			
-			wifiConfiguration.SSID = ssid;
-			wifiConfiguration.preSharedKey = password;
+		if (encrypTpye == WifiChiperType.WIFICIPHER_WEP) {			
+			wifiConfiguration.SSID = "\""+ ssid+"\"";;
+			wifiConfiguration.preSharedKey = "\""+ password+"\"";;
 			wifiConfiguration.hiddenSSID = true;
 			/** WPA is not used; plaintext or static WEP could be used. */
 			wifiConfiguration.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
@@ -588,11 +724,10 @@ public class WifiManagerUtils {
 			wifiConfiguration.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
 		}
 		if (encrypTpye == WifiChiperType.WIFICIPHER_WPA) {
-
-			wifiConfiguration.SSID = ssid;
-			wifiConfiguration.preSharedKey = password;
-			wifiConfiguration.hiddenSSID = true;
-			//根据源代码的注释选择
+			wifiConfiguration.SSID = "\""+ ssid+"\"";
+			wifiConfiguration.preSharedKey ="\""+ password+"\"";
+			wifiConfiguration.hiddenSSID = false; //显示密码 调试
+			//根据源代码的注释选择 
 			wifiConfiguration.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
 
 			wifiConfiguration.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN);
@@ -602,13 +737,17 @@ public class WifiManagerUtils {
 
 			wifiConfiguration.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.CCMP);
 			wifiConfiguration.allowedGroupCiphers.set(WifiConfiguration.GroupCipher.TKIP);
-
+			//连接wifi是不是这个不能设置
 			wifiConfiguration.allowedProtocols.set(WifiConfiguration.Protocol.RSN);
+			//WPA
 			wifiConfiguration.allowedProtocols.set(WifiConfiguration.Protocol.WPA);
-
+			//强行开启
+			wifiConfiguration.status = WifiConfiguration.Status.ENABLED;
 		} else {
+			//没有密码类型return null
 			return null;
 		}
+		Log.i(TAG,getClass().getSimpleName()+": "+wifiConfiguration.toString());
 		return wifiConfiguration;
 	}
 
